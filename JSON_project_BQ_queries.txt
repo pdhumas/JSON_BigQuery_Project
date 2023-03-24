@@ -1,0 +1,227 @@
+---Extracting daysBitArray from UberEats Data---
+--CREATE OR REPLACE TABLE `loop-assignment.response.UE_dba_extracted` AS  
+(WITH q2 AS
+      (WITH q1 AS 
+        (WITH ue_latest AS(
+          SELECT  *
+          FROM  (
+            SELECT
+              MAX(timestamp) over(partition by slug) AS latest, *
+            FROM arboreal-vision-339901.take_home_v2.virtual_kitchen_ubereats_hours
+            ORDER BY slug ASC,timestamp DESC
+            )
+          WHERE latest = timestamp
+        )
+         SELECT JSON_QUERY(response.data.menus, '$') as response_menus,*
+          FROM ue_latest
+          ORDER BY slug ASC,timestamp DESC
+          --limit 20
+        )
+        SELECT IF(TO_JSON_STRING(q1.response_menus) ="null",NULL, SUBSTR(TO_JSON_STRING(q1.response_
+menus), 3 , 36)) as var_key,*
+        FROM q1
+      )
+      SELECT t.response.data.menus[var_key].sections[0].regularHours AS daysBitArray
+      ,t.var_key
+      ,t.slug
+      ,t.timestamp
+      ,t.b_name
+      ,t.vb_name
+      ,t.vb_platform
+      ,t.vb_address
+      ,t.token
+      FROM q2 t
+      WHERE var_key IS NOT NULL
+);
+---Extracting schedule from GrubHub Data---
+--CREATE OR REPLACE TABLE `loop-assignment.response.GH_schedule_extracted` AS
+  (WITH q2 AS
+    (WITH q1 AS
+      (SELECT
+        TO_JSON_STRING(response.availability_by_catalog.STANDARD_DELIVERY.schedule_rules) AS schedul
+e,*
+      EXCEPT (response)
+      FROM arboreal-vision-339901.take_home_v2.virtual_kitchen_grubhub_hours
+      ORDER BY slug ASC, timestamp DESC
+      --LIMIT 1000
+      )
+    SELECT * FROM q1
+    WHERE (q1.schedule != "[]")
+    )
+  SELECT t.schedule 
+      ,t.slug
+      ,t.timestamp
+      ,t.b_name
+      ,t.vb_name
+      ,t.vb_platform
+      ,t.vb_address
+      ,t.token -- extracting the latest daysBitArray from GrubHub
+  FROM  (
+      SELECT
+        MAX(timestamp) over(partition by slug) AS latest,*
+      FROM q2
+      ORDER BY slug ASC,timestamp DESC
+  ) t
+  WHERE latest = timestamp
+  );
+--- Joining the two tables and making a seperate table as 'ue_gh_combined_table' ---
+-- CREATE OR REPLACE TABLE `loop-assignment.response.ue_gh_combined_table` AS
+(WITH ue AS(
+  SELECT TO_JSON_STRING(daysBitArray),* FROM `loop-assignment.response.UE_dba_extracted`
+)
+SELECT t1.daysBitArray
+  ,t2.schedule
+  ,t1.slug as uber_eats_slug
+  ,t1.vb_name as t1_vb_name
+  ,t1.b_name as t1_b_name
+  ,t2.slug as grub_hub_slug
+  ,t2.vb_name as t2_vb_name
+  ,t2.b_name as t2_b_name
+  ,t1.vb_address
+FROM ue t1 -- UberEats table --
+JOIN `loop-assignment.response.GH_schedule_extracted` t2 --GrubHub table --
+ON t1.b_name = t2.b_name AND t1.vb_name = t2.vb_name
+
+ORDER BY t1.vb_name, t1.b_name
+);
+--- Creating a seperate table with dayBitArray formatted and simplified named 'temp_dba' ---
+-- CREATE OR REPLACE TABLE `loop-assignment.response.temp_dba` AS
+(WITH dba_unnested AS
+  (WITH q1a AS
+    (SELECT JSON_extract_array(daysBitArray) AS dba_array
+      , JSON_extract_array(PARSE_JSON(schedule)) AS schedule_array
+      ,*
+    FROM `loop-assignment.response.ue_gh_combined_table` 
+    --LIMIT 5
+    )
+  SELECT 
+    JSON_extract_array(dba.daysBitArray) AS dba_dayBitArray
+    ,TO_JSON_STRING(dba.startTime) AS dba_startTime
+    ,TO_JSON_STRING(dba.endTime) AS dba_endTime
+    ,uber_eats_slug
+    ,t1_vb_name
+    ,t1_b_name
+    ,vb_address
+  FROM q1a, UNNEST(q1a.dba_array) as dba
+  )
+------------ for formatting daysBitArray ------------------------
+SELECT 
+  ARRAY_TO_STRING(
+  ARRAY(
+    SELECT CASE 
+      WHEN TO_JSON_STRING(dba_dayBitArray[OFFSET(0)]) = 'true' THEN 'MONDAY'
+      WHEN TO_JSON_STRING(dba_dayBitArray[OFFSET(1)]) = 'true' THEN 'TUESDAY'
+      WHEN TO_JSON_STRING(dba_dayBitArray[OFFSET(2)]) = 'true' THEN 'WEDNESDAY'
+      WHEN TO_JSON_STRING(dba_dayBitArray[OFFSET(3)]) = 'true' THEN 'THURSDAY'
+      WHEN TO_JSON_STRING(dba_dayBitArray[OFFSET(4)]) = 'true' THEN 'FRIDAY'
+      WHEN TO_JSON_STRING(dba_dayBitArray[OFFSET(5)]) = 'true' THEN 'SATURDAY'
+      WHEN TO_JSON_STRING(dba_dayBitArray[OFFSET(6)]) = 'true' THEN 'SUNDAY'
+      ELSE NULL
+    END
+  ), ', ') AS days_of_week
+  ,CONCAT(SUBSTR(dba_startTime,2,2),SUBSTR(dba_startTime,4,3)) AS dba_startTime
+  ,CONCAT(SUBSTR(dba_endTime,2,2),SUBSTR(dba_endTime,4,3)) AS dba_endTime
+  ,uber_eats_slug
+  ,t1_vb_name
+  ,t1_b_name
+  ,vb_address
+FROM dba_unnested
+ORDER BY t1_vb_name ASC, t1_b_name ASC,CASE days_of_week
+        WHEN 'MONDAY' THEN 1
+        WHEN 'TUESDAY' THEN 2
+        WHEN 'WEDNESDAY' THEN 3
+        WHEN 'THURSDAY' THEN 4
+        WHEN 'FRIDAY' THEN 5
+        WHEN 'SATURDAY' THEN 6
+        WHEN 'SUNDAY' THEN 7
+    END
+);
+--- Creating a seperate table with schedule column formatted and simplified named 'temp_sc' ---
+-- CREATE OR REPLACE TABLE `loop-assignment.response.temp_sc` AS
+  (WITH q1a AS
+    (SELECT JSON_extract_array(daysBitArray) AS dba_array
+      , JSON_extract_array(PARSE_JSON(schedule)) AS schedule_array
+      ,*
+    FROM `loop-assignment.response.ue_gh_combined_table` 
+    --LIMIT 5
+    )
+  SELECT 
+    REPLACE(REPLACE(TO_JSON_STRING(schedule.days_of_week), '["', ''), '"]', '') AS sc_day_of_week
+    ,SUBSTR(TO_JSON_STRING(schedule.from),2,5) AS sc_startTime
+    ,SUBSTR(TO_JSON_STRING(schedule.to),2,5) AS sc_endTime
+    ,grub_hub_slug
+    ,t2_vb_name
+    ,t2_b_name
+    ,vb_address
+  FROM q1a, UNNEST(q1a.schedule_array) as schedule
+  ORDER BY t2_vb_name ASC, t2_b_name ASC, CASE sc_day_of_week
+        WHEN 'MONDAY' THEN 1
+        WHEN 'TUESDAY' THEN 2
+        WHEN 'WEDNESDAY' THEN 3
+        WHEN 'THURSDAY' THEN 4
+        WHEN 'FRIDAY' THEN 5
+        WHEN 'SATURDAY' THEN 6
+        WHEN 'SUNDAY' THEN 7
+    END
+  );
+
+--- Joining 'temp_dba' and 'temp_sc' over b_name and vb_name and comparing start and end time ---
+--- the outcome is the shown in a new column named 'Is_out_of_Range' ---
+SELECT 
+  grub_hub_slug
+  ,sc_day_of_week AS GH_day_of_week
+  ,gh_st 
+  ,gh_et
+  ,uber_eats_slug
+  ,days_of_week AS UE_day_of_week
+  ,ue_st
+  ,ue_et
+  ,Is_out_of_Range
+  ,t1_vb_name AS vb_name
+  ,t1_b_name AS b_name
+FROM
+(WITH q1 AS
+  (SELECT
+    CAST(PARSE_TIME('%H:%M',dba_startTime) as TIME) AS ue_st
+    ,CAST(PARSE_TIME('%H:%M',dba_endTime) as TIME) AS ue_et
+    ,CAST(PARSE_TIME('%H:%M',sc_startTime) as TIME) AS gh_st
+    ,CAST(PARSE_TIME('%H:%M',sc_endTime) as TIME) AS gh_et
+    ,*
+  FROM (SELECT * FROM `loop-assignment.response.temp_dba` t1
+  FULL OUTER JOIN 
+    `loop-assignment.response.temp_sc`  t2
+  ON t1.t1_vb_name = t2.t2_vb_name
+  AND t1.t1_b_name = t2.t2_b_name
+  AND t1.days_of_week = t2.sc_day_of_week
+  ORDER BY t1.t1_vb_name ASC , t2.t2_vb_name ASC, t1.t1_b_name ASC,  t2.t2_b_name ASC,
+  CASE days_of_week
+        WHEN 'MONDAY' THEN 1
+        WHEN 'TUESDAY' THEN 2
+        WHEN 'WEDNESDAY' THEN 3
+        WHEN 'THURSDAY' THEN 4
+        WHEN 'FRIDAY' THEN 5
+        WHEN 'SATURDAY' THEN 6
+        WHEN 'SUNDAY' THEN 7
+    END
+  )
+) 
+SELECT
+  CASE
+    --- case to check if in Range
+    WHEN (TIME_DIFF(q1.gh_st,q1.ue_st,MINUTE)>=0) AND (TIME_DIFF(q1.ue_et,q1.gh_et,MINUTE)>=0) 
+    THEN 'In Range'
+    --- case to check if out of range within 5 mins
+    WHEN ((TIME_DIFF(q1.gh_st,q1.ue_st,MINUTE)>=-5)AND(TIME_DIFF(q1.ue_et,q1.gh_et,MINUTE)>=0))
+    OR ((TIME_DIFF(q1.gh_st,q1.ue_st,MINUTE)>=0)AND(TIME_DIFF(q1.ue_et,q1.gh_et,MINUTE)>=-5)) 
+    OR ((TIME_DIFF(q1.gh_st,q1.ue_st,MINUTE)>=-5)AND(TIME_DIFF(q1.ue_et,q1.gh_et,MINUTE)>=-5)) 
+    THEN 'Out of Range with 5 mins difference between GH and UE'
+    --- --- ---
+    ELSE 'Out of Range'
+  END AS Is_out_of_Range
+  ,*
+  FROM q1
+  WHERE q1.ue_st IS NOT NULL
+  )
+
+
+
