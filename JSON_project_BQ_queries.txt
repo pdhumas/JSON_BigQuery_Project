@@ -1,5 +1,5 @@
 ---Extracting daysBitArray from UberEats Data---
---CREATE OR REPLACE TABLE `loop-assignment.response.UE_dba_extracted` AS  
+--CREATE OR REPLACE TABLE `angelic-bee-374317.dataset_1.UE_dba_extracted` AS  
 (WITH q2 AS
       (WITH q1 AS 
         (WITH ue_latest AS(
@@ -7,7 +7,7 @@
           FROM  (
             SELECT
               MAX(timestamp) over(partition by slug) AS latest, *
-            FROM arboreal-vision-339901.take_home_v2.virtual_kitchen_ubereats_hours
+            FROM angelic-bee-374317.dataset_1.UberEats_dataset
             ORDER BY slug ASC,timestamp DESC
             )
           WHERE latest = timestamp
@@ -34,14 +34,14 @@ menus), 3 , 36)) as var_key,*
       WHERE var_key IS NOT NULL
 );
 ---Extracting schedule from GrubHub Data---
---CREATE OR REPLACE TABLE `loop-assignment.response.GH_schedule_extracted` AS
+--CREATE OR REPLACE TABLE `angelic-bee-374317.dataset_1.GH_schedule_extracted` AS
   (WITH q2 AS
     (WITH q1 AS
       (SELECT
         TO_JSON_STRING(response.availability_by_catalog.STANDARD_DELIVERY.schedule_rules) AS schedul
 e,*
       EXCEPT (response)
-      FROM arboreal-vision-339901.take_home_v2.virtual_kitchen_grubhub_hours
+      FROM angelic-bee-374317.dataset_1.GrubHub_Dataset
       ORDER BY slug ASC, timestamp DESC
       --LIMIT 1000
       )
@@ -65,9 +65,9 @@ e,*
   WHERE latest = timestamp
   );
 --- Joining the two tables and making a seperate table as 'ue_gh_combined_table' ---
--- CREATE OR REPLACE TABLE `loop-assignment.response.ue_gh_combined_table` AS
+-- CREATE OR REPLACE TABLE `angelic-bee-374317.dataset_1.ue_gh_combined_table` AS
 (WITH ue AS(
-  SELECT TO_JSON_STRING(daysBitArray),* FROM `loop-assignment.response.UE_dba_extracted`
+  SELECT TO_JSON_STRING(daysBitArray),* FROM `angelic-bee-374317.dataset_1.UE_dba_extracted`
 )
 SELECT t1.daysBitArray
   ,t2.schedule
@@ -79,19 +79,19 @@ SELECT t1.daysBitArray
   ,t2.b_name as t2_b_name
   ,t1.vb_address
 FROM ue t1 -- UberEats table --
-JOIN `loop-assignment.response.GH_schedule_extracted` t2 --GrubHub table --
+JOIN `angelic-bee-374317.dataset_1.GH_schedule_extracted` t2 --GrubHub table --
 ON t1.b_name = t2.b_name AND t1.vb_name = t2.vb_name
 
 ORDER BY t1.vb_name, t1.b_name
 );
 --- Creating a seperate table with dayBitArray formatted and simplified named 'temp_dba' ---
--- CREATE OR REPLACE TABLE `loop-assignment.response.temp_dba` AS
+-- CREATE OR REPLACE TABLE `angelic-bee-374317.dataset_1.temp_dba` AS
 (WITH dba_unnested AS
   (WITH q1a AS
     (SELECT JSON_extract_array(daysBitArray) AS dba_array
       , JSON_extract_array(PARSE_JSON(schedule)) AS schedule_array
       ,*
-    FROM `loop-assignment.response.ue_gh_combined_table` 
+    FROM `angelic-bee-374317.dataset_1.ue_gh_combined_table` 
     --LIMIT 5
     )
   SELECT 
@@ -137,12 +137,12 @@ ORDER BY t1_vb_name ASC, t1_b_name ASC,CASE days_of_week
     END
 );
 --- Creating a seperate table with schedule column formatted and simplified named 'temp_sc' ---
--- CREATE OR REPLACE TABLE `loop-assignment.response.temp_sc` AS
+-- CREATE OR REPLACE TABLE `angelic-bee-374317.dataset_1.temp_sc` AS
   (WITH q1a AS
     (SELECT JSON_extract_array(daysBitArray) AS dba_array
       , JSON_extract_array(PARSE_JSON(schedule)) AS schedule_array
       ,*
-    FROM `loop-assignment.response.ue_gh_combined_table` 
+    FROM `angelic-bee-374317.dataset_1.ue_gh_combined_table` 
     --LIMIT 5
     )
   SELECT 
@@ -187,9 +187,9 @@ FROM
     ,CAST(PARSE_TIME('%H:%M',sc_startTime) as TIME) AS gh_st
     ,CAST(PARSE_TIME('%H:%M',sc_endTime) as TIME) AS gh_et
     ,*
-  FROM (SELECT * FROM `loop-assignment.response.temp_dba` t1
+  FROM (SELECT * FROM `angelic-bee-374317.dataset_1.temp_dba` t1
   FULL OUTER JOIN 
-    `loop-assignment.response.temp_sc`  t2
+    `angelic-bee-374317.dataset_1.temp_sc`  t2
   ON t1.t1_vb_name = t2.t2_vb_name
   AND t1.t1_b_name = t2.t2_b_name
   AND t1.days_of_week = t2.sc_day_of_week
